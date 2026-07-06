@@ -1,0 +1,1486 @@
+openapi: 3.0.3
+info:
+  title: CVFit Resume API
+  description: |
+    Backend API for CVFit — ATS-first resume builder with AI generation, PDF export, and Razorpay payments.
+
+    **Authentication**: Most endpoints require a Bearer JWT token obtained from `/api/auth/login` or `/api/auth/register`.
+    Pass it as `Authorization: Bearer <token>`.
+
+    **Response envelope**: Every JSON response is wrapped in `{ "success": true, "data": ... }` on success,
+    or `{ "success": false, "error": { "code": 4xx, "message": "..." } }` on failure.
+  version: 1.1.0
+  contact:
+    email: helloamit3107@gmail.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Register, login, profile
+  - name: OAuth
+    description: Google / GitHub / LinkedIn social login
+  - name: Resume
+    description: Render HTML and generate PDF
+  - name: Templates
+    description: List available resume templates
+  - name: ATS
+    description: ATS score — file upload or structured resume
+  - name: AI
+    description: AI content generation & tools (Gemini, with Ollama fallback)
+  - name: Payment
+    description: Razorpay per-download payment flow
+  - name: Requests
+    description: '"Ask Us to Create" paid service requests'
+  - name: Admin
+    description: Admin-only endpoints (is_admin required)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ── Envelope ───────────────────────────────────────────────────────────
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          description: Payload — varies by endpoint
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 400
+            message:
+              type: string
+              example: "email is required"
+
+    # ── Auth ───────────────────────────────────────────────────────────────
+    UserProfile:
+      type: object
+      properties:
+        id:          { type: string, example: "usr_01HXYZ" }
+        email:       { type: string, example: "jane@example.com" }
+        name:        { type: string, example: "Jane Doe" }
+        provider:    { type: string, example: "email", enum: [email, google, github, linkedin] }
+        has_paid:    { type: boolean, example: false }
+        paid_at:     { type: string, format: date-time, nullable: true }
+        is_admin:    { type: boolean, example: false }
+        created_at:  { type: string, format: date-time }
+        first_name:  { type: string, example: "Jane" }
+        last_name:   { type: string, example: "Doe" }
+        headline:    { type: string, example: "Senior Software Engineer" }
+        phone:       { type: string, example: "+91 98765 43210" }
+        location:    { type: string, example: "Bangalore, India" }
+        website:     { type: string, example: "https://janedoe.dev" }
+        linkedin:    { type: string, example: "linkedin.com/in/janedoe" }
+        github:      { type: string, example: "github.com/janedoe" }
+        photo_url:   { type: string, example: "https://example.com/photo.jpg" }
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    # ── Resume models ──────────────────────────────────────────────────────
+    Personal:
+      type: object
+      required: [first_name, last_name, email, phone]
+      properties:
+        first_name:  { type: string, example: "Jane" }
+        last_name:   { type: string, example: "Doe" }
+        headline:    { type: string, example: "Full-Stack Engineer · Open to Work" }
+        email:       { type: string, example: "jane@example.com" }
+        phone:       { type: string, example: "+91 98765 43210" }
+        location:    { type: string, example: "Bangalore, India" }
+        linkedin:    { type: string, example: "linkedin.com/in/janedoe" }
+        github:      { type: string, example: "github.com/janedoe" }
+        website:     { type: string, example: "https://janedoe.dev" }
+        photo_url:   { type: string, example: "" }
+
+    Experience:
+      type: object
+      required: [company, position, start_date]
+      properties:
+        company:     { type: string, example: "Groww" }
+        position:    { type: string, example: "Software Engineer II" }
+        location:    { type: string, example: "Bangalore, India" }
+        start_date:  { type: string, example: "2022-06" }
+        end_date:    { type: string, example: "2024-01" }
+        current:     { type: boolean, example: false }
+        description: { type: string }
+        highlights:
+          type: array
+          items: { type: string }
+          example: ["Led migration to microservices, reducing p99 latency by 40%"]
+
+    Education:
+      type: object
+      required: [institution, degree, field, start_date]
+      properties:
+        institution: { type: string, example: "IIT Bombay" }
+        degree:      { type: string, example: "B.Tech" }
+        field:       { type: string, example: "Computer Science" }
+        start_date:  { type: string, example: "2018-07" }
+        end_date:    { type: string, example: "2022-05" }
+        gpa:         { type: string, example: "8.9 / 10" }
+        description: { type: string }
+
+    Skill:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string, example: "Go" }
+        category:    { type: string, example: "Backend" }
+        proficiency: { type: string, example: "Expert", enum: [Beginner, Intermediate, Advanced, Expert] }
+
+    Project:
+      type: object
+      required: [name, description]
+      properties:
+        name:         { type: string, example: "CVFit" }
+        description:  { type: string, example: "ATS-first resume builder" }
+        url:          { type: string, example: "https://github.com/user/cvfit" }
+        technologies:
+          type: array
+          items: { type: string }
+          example: ["Go", "Next.js", "DynamoDB"]
+        start_date:   { type: string, example: "2024-01" }
+        end_date:     { type: string, example: "2024-06" }
+
+    Certification:
+      type: object
+      required: [name, issuer, issue_date]
+      properties:
+        name:          { type: string, example: "AWS Solutions Architect" }
+        issuer:        { type: string, example: "Amazon Web Services" }
+        issue_date:    { type: string, example: "2023-09" }
+        expiry_date:   { type: string, example: "2026-09" }
+        credential_id: { type: string }
+        url:           { type: string }
+
+    Language:
+      type: object
+      required: [name, proficiency]
+      properties:
+        name:        { type: string, example: "Hindi" }
+        proficiency: { type: string, example: "Native" }
+
+    Metadata:
+      type: object
+      properties:
+        font_family:   { type: string, example: "Inter" }
+        font_size:     { type: integer, example: 11 }
+        primary_color: { type: string, example: "#1a1a1a" }
+        accent_color:  { type: string, example: "#2563eb" }
+        line_spacing:  { type: number, example: 1.4 }
+        margin_top:    { type: number, example: 20 }
+        margin_bottom: { type: number, example: 20 }
+        margin_left:   { type: number, example: 20 }
+        margin_right:  { type: number, example: 20 }
+
+    Resume:
+      type: object
+      required: [title, template, personal, summary, experience, education, skills, metadata]
+      properties:
+        id:           { type: string, example: "res_01HXYZ" }
+        user_id:      { type: string }
+        title:        { type: string, example: "My Resume" }
+        template:     { type: string, example: "modern", enum: [modern, universal, standard, blueprint] }
+        status:       { type: string, example: "draft" }
+        personal:     { $ref: '#/components/schemas/Personal' }
+        summary:      { type: string, example: "Full-stack engineer with 4+ years..." }
+        experience:
+          type: array
+          items: { $ref: '#/components/schemas/Experience' }
+        education:
+          type: array
+          items: { $ref: '#/components/schemas/Education' }
+        skills:
+          type: array
+          items: { $ref: '#/components/schemas/Skill' }
+        projects:
+          type: array
+          items: { $ref: '#/components/schemas/Project' }
+        certifications:
+          type: array
+          items: { $ref: '#/components/schemas/Certification' }
+        languages:
+          type: array
+          items: { $ref: '#/components/schemas/Language' }
+        metadata:     { $ref: '#/components/schemas/Metadata' }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+
+    # ── ATS ────────────────────────────────────────────────────────────────
+    ATSResult:
+      type: object
+      properties:
+        overall_score:        { type: integer, example: 82 }
+        keyword_match:        { type: integer, example: 75 }
+        formatting_score:     { type: integer, example: 90 }
+        section_completeness: { type: integer, example: 85 }
+        suggestions:
+          type: array
+          items: { type: string }
+          example: ["Add measurable achievements to experience bullets"]
+        matched_keywords:
+          type: array
+          items: { type: string }
+          example: ["Go", "REST API", "DynamoDB"]
+        missing_keywords:
+          type: array
+          items: { type: string }
+          example: ["Kubernetes", "CI/CD"]
+
+    # ── AI ─────────────────────────────────────────────────────────────────
+    AIGenerateResult:
+      type: object
+      properties:
+        summary: { type: string, example: "Experienced engineer with expertise in Go and cloud systems." }
+        skills:
+          type: array
+          items: { $ref: '#/components/schemas/Skill' }
+
+    AIProjectResult:
+      type: object
+      properties:
+        description:
+          type: string
+          example: "Built a scalable ATS-optimized resume builder using Go and Next.js, processing 10k+ PDFs monthly."
+        technologies:
+          type: array
+          items: { type: string }
+          example: ["Go", "Next.js", "DynamoDB", "Razorpay"]
+        skills:
+          type: array
+          items: { $ref: '#/components/schemas/Skill' }
+
+    # ── Payment ────────────────────────────────────────────────────────────
+    PaymentOrder:
+      type: object
+      properties:
+        order_id:  { type: string, example: "order_Pxxxxxxxxxxxxxxxx" }
+        amount:    { type: integer, example: 2100, description: "Amount in paise (₹21 = 2100)" }
+        currency:  { type: string, example: "INR" }
+        key_id:    { type: string, example: "rzp_test_xxxxxxxx" }
+        resume_id: { type: string, example: "res_01HXYZ" }
+
+    Order:
+      type: object
+      properties:
+        id:            { type: string, example: "order_Pxxxxxxxxxxxxxxxx" }
+        user_id:       { type: string }
+        user_email:    { type: string }
+        resume_id:     { type: string }
+        amount:        { type: integer, example: 2100 }
+        status:        { type: string, example: "success", enum: [pending, success, failed] }
+        payment_id:    { type: string, example: "pay_Pxxxxxxxxxxxxxxxx" }
+        paid_at:       { type: string, format: date-time, nullable: true }
+        is_email_sent: { type: boolean }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    # ── Resume Creation Request ────────────────────────────────────────────
+    ResumeRequest:
+      type: object
+      properties:
+        id:          { type: string }
+        user_id:     { type: string }
+        name:        { type: string, example: "Jane Doe" }
+        email:       { type: string, example: "jane@example.com" }
+        resume_link: { type: string, example: "https://drive.google.com/file/d/..." }
+        wants_call:  { type: boolean, example: false }
+        notes:       { type: string, example: "5 years in fintech, targeting product roles" }
+        amount:      { type: integer, example: 50000, description: "Amount in paise (₹500)" }
+        status:      { type: string, example: "paid", enum: [pending, paid, in_progress, completed] }
+        payment_id:  { type: string }
+        paid_at:     { type: string, format: date-time, nullable: true }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    # ── Template ───────────────────────────────────────────────────────────
+    TemplateInfo:
+      type: object
+      properties:
+        name:        { type: string, example: "modern" }
+        label:       { type: string, example: "Modern" }
+        description: { type: string, example: "Dark header · accent skill tags · bordered project cards" }
+
+# ── Paths ──────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ─────────────────────────────────────────────────────────────────
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email:    { type: string, example: "jane@example.com" }
+                password: { type: string, example: "SecurePass123!" }
+                name:     { type: string, example: "Jane Doe" }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AuthResponse' }
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, example: "jane@example.com" }
+                password: { type: string, example: "SecurePass123!" }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Send a verification code (OTP-based signup)
+      description: Emails a 6-digit code (requires SES). On verify, the account is created and logged in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+                name: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Code sent }
+        '500':
+          description: Failed to send (SES not configured?)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Verify the OTP → create account + log in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string }
+                code: { type: string, example: "123456" }
+      responses:
+        '200':
+          description: Account created + token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AuthResponse' }
+        '400':
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/UserProfile' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/users/me:
+    patch:
+      tags: [Auth]
+      summary: Update user profile (name, headline, phone, location, experience, education, etc.)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:           { type: string }
+                first_name:     { type: string }
+                last_name:      { type: string }
+                headline:       { type: string }
+                phone:          { type: string }
+                location:       { type: string }
+                website:        { type: string }
+                linkedin:       { type: string }
+                github:         { type: string }
+                photo_url:      { type: string }
+                experience:
+                  type: array
+                  items: { $ref: '#/components/schemas/Experience' }
+                education:
+                  type: array
+                  items: { $ref: '#/components/schemas/Education' }
+                certifications:
+                  type: array
+                  items: { $ref: '#/components/schemas/Certification' }
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/UserProfile' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── OAuth ─────────────────────────────────────────────────────────────────
+
+  /api/auth/oauth/{provider}:
+    get:
+      tags: [OAuth]
+      summary: Begin OAuth login (redirects to provider)
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [google, github, linkedin] }
+      responses:
+        '307':
+          description: Redirect to OAuth provider
+
+  /api/auth/oauth/{provider}/callback:
+    get:
+      tags: [OAuth]
+      summary: OAuth callback — redirects to frontend with token in query params
+      description: |
+        On success, redirects to `{FRONTEND_URL}/auth/callback?token=...&id=...&email=...&name=...&created_at=...`
+
+        On failure, redirects to `{FRONTEND_URL}/login?error=...`
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [google, github, linkedin] }
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '307':
+          description: Redirect to frontend callback URL
+
+  # ── Templates ─────────────────────────────────────────────────────────────
+
+  /api/templates:
+    get:
+      tags: [Templates]
+      summary: List all available resume templates
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/TemplateInfo' }
+
+  # ── Resume ────────────────────────────────────────────────────────────────
+
+  /api/resumes/render:
+    post:
+      tags: [Resume]
+      summary: Render resume to HTML (live preview)
+      description: Returns raw HTML string. No authentication required; watermark not applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Resume' }
+      responses:
+        '200':
+          description: Rendered HTML
+          content:
+            text/html:
+              schema: { type: string }
+        '400':
+          description: Invalid resume JSON
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/resumes/pdf:
+    post:
+      tags: [Resume]
+      summary: Generate resume PDF (headless Chrome)
+      description: |
+        Generates a PDF via headless Chrome.
+
+        **Watermark behaviour**: A "PREVIEW / ZustResume" tiled watermark is applied unless the
+        authenticated user has made a successful Razorpay payment in the **last 30 minutes**.
+        Pay via `POST /api/payment/create-order` → verify → then call this endpoint within the window.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Resume' }
+      responses:
+        '200':
+          description: PDF file
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid resume JSON
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: PDF generation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/resumes/import:
+    post:
+      tags: [Resume]
+      summary: Parse an existing resume into structured data (rule-based, no AI)
+      description: |
+        Extracts a structured resume from an uploaded file or pasted text using rule-based
+        parsing — no AI, no token cost. PDFs are read with a real PDF text library.
+        Requires authentication. Accepts either a multipart file or JSON text.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                resume:
+                  type: string
+                  format: binary
+                  description: PDF, DOC, DOCX or TXT
+          application/json:
+            schema:
+              type: object
+              required: [resume_text]
+              properties:
+                resume_text: { type: string }
+      responses:
+        '200':
+          description: Structured resume
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Resume' }
+        '400':
+          description: No readable text (e.g. scanned/image PDF) — paste text instead
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── ATS ───────────────────────────────────────────────────────────────────
+
+  /api/ats/score:
+    post:
+      tags: [ATS]
+      summary: Score an uploaded resume file against a job description
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [resume]
+              properties:
+                resume:
+                  type: string
+                  format: binary
+                  description: Resume file (PDF or DOCX, max 5 MB)
+                job_description:
+                  type: string
+                  description: Optional job description text to match against
+      responses:
+        '200':
+          description: ATS score result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ATSResult' }
+        '400':
+          description: Missing file or parse error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/ats/score-resume:
+    post:
+      tags: [ATS]
+      summary: Score a structured resume object against a job description
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume]
+              properties:
+                resume:
+                  $ref: '#/components/schemas/Resume'
+                job_description:
+                  type: string
+                  example: "Looking for a Go engineer with 3+ years of backend experience"
+      responses:
+        '200':
+          description: ATS score result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ATSResult' }
+        '400':
+          description: Invalid body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── AI ────────────────────────────────────────────────────────────────────
+
+  /api/ai/generate:
+    post:
+      tags: [AI]
+      summary: Generate resume summary and skills from a job description
+      description: Uses local Ollama LLM. Returns a professional summary and suggested skills.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_description]
+              properties:
+                job_description:
+                  type: string
+                  example: "Senior Go engineer at a fintech startup, building payments infrastructure..."
+      responses:
+        '200':
+          description: Generated summary and skills
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AIGenerateResult' }
+        '500':
+          description: Ollama error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/ai/skills:
+    post:
+      tags: [AI]
+      summary: Generate skills list from the user's current role
+      description: Detects 14–18 relevant skills based on job title. No JD required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  example: "Senior Software Engineer"
+      responses:
+        '200':
+          description: Suggested skills
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          skills:
+                            type: array
+                            items: { $ref: '#/components/schemas/Skill' }
+        '500':
+          description: Ollama error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/ai/project:
+    post:
+      tags: [AI]
+      summary: Enhance a project description and extract tech stack + skills
+      description: |
+        Takes a rough project description written by the user and:
+        - Rewrites it with correct grammar and ATS keywords (2–3 sentences, ≤380 chars, active voice)
+        - Extracts 4–10 technologies used
+        - Suggests 6–12 relevant skills
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description]
+              properties:
+                description:
+                  type: string
+                  example: "built a resume app with go and react, users can download pdf, added razorpay"
+      responses:
+        '200':
+          description: Enhanced project data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AIProjectResult' }
+        '500':
+          description: AI error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/ai/cover-letter:
+    post:
+      tags: [AI]
+      summary: Generate a tailored cover letter
+      description: Standalone AI tool. Rate-limited per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text, job_description]
+              properties:
+                resume_text: { type: string }
+                job_description: { type: string }
+      responses:
+        '200':
+          description: Cover letter
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          cover_letter: { type: string }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/linkedin:
+    post:
+      tags: [AI]
+      summary: Optimise a LinkedIn profile from resume text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text]
+              properties:
+                resume_text: { type: string }
+      responses:
+        '200':
+          description: Headline, about section and skills
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          headline: { type: string }
+                          about: { type: string }
+                          skills: { type: array, items: { type: string } }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/interview:
+    post:
+      tags: [AI]
+      summary: Generate interview questions from resume text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text]
+              properties:
+                resume_text: { type: string }
+                job_description: { type: string, description: Optional target role }
+      responses:
+        '200':
+          description: Questions grouped by category
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          hr: { type: array, items: { type: string } }
+                          technical: { type: array, items: { type: string } }
+                          system_design: { type: array, items: { type: string } }
+                          coding: { type: array, items: { type: string } }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/keyword-gap:
+    post:
+      tags: [AI]
+      summary: Compare a resume against a job description
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text, job_description]
+              properties:
+                resume_text: { type: string }
+                job_description: { type: string }
+      responses:
+        '200':
+          description: Keyword match analysis
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          match_score: { type: integer }
+                          matched: { type: array, items: { type: string } }
+                          missing: { type: array, items: { type: string } }
+                          weak: { type: array, items: { type: string } }
+                          strong: { type: array, items: { type: string } }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/career-coach:
+    post:
+      tags: [AI]
+      summary: Career guidance from resume text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text]
+              properties:
+                resume_text: { type: string }
+      responses:
+        '200':
+          description: Certifications, courses, skills, salary and roadmap
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          certifications: { type: array, items: { type: string } }
+                          courses: { type: array, items: { type: string } }
+                          skills_to_learn: { type: array, items: { type: string } }
+                          salary_estimate: { type: string }
+                          roadmap:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                title: { type: string }
+                                timeframe: { type: string }
+                                description: { type: string }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/project-generate:
+    post:
+      tags: [AI]
+      summary: Invent a portfolio project from a tech stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tech_stack]
+              properties:
+                tech_stack: { type: string, example: "Golang + Kubernetes + Redis" }
+      responses:
+        '200':
+          description: Generated project
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          title: { type: string }
+                          description: { type: string }
+                          architecture: { type: string }
+                          technologies: { type: array, items: { type: string } }
+                          bullet_points: { type: array, items: { type: string } }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  /api/ai/resume-review:
+    post:
+      tags: [AI]
+      summary: Recruiter-style resume review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_text]
+              properties:
+                resume_text: { type: string }
+      responses:
+        '200':
+          description: Scores and qualitative feedback
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          overall_score: { type: integer }
+                          impact_score: { type: integer }
+                          recruiter_score: { type: integer }
+                          technical_depth: { type: integer }
+                          weak_bullets: { type: array, items: { type: string } }
+                          missing_verbs: { type: array, items: { type: string } }
+                          grammar_issues: { type: array, items: { type: string } }
+                          strengths: { type: array, items: { type: string } }
+                          recommendations: { type: array, items: { type: string } }
+        '429': { description: Rate limit exceeded }
+        '500': { description: AI error }
+
+  # ── Payment ───────────────────────────────────────────────────────────────
+
+  /api/payment/create-order:
+    post:
+      tags: [Payment]
+      summary: Create a Razorpay order for a PDF download (₹21)
+      description: |
+        Creates a Razorpay order and records it as `pending` in the orders table.
+        Pass the returned `order_id` to the Razorpay checkout SDK, then verify via `/api/payment/verify`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_id]
+              properties:
+                resume_id:
+                  type: string
+                  example: "res_01HXYZ"
+      responses:
+        '200':
+          description: Razorpay order details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PaymentOrder' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '502':
+          description: Razorpay API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/payment/verify:
+    post:
+      tags: [Payment]
+      summary: Verify Razorpay payment signature and mark order as successful
+      description: |
+        Validates HMAC-SHA256 signature (`order_id|payment_id` signed with Razorpay key secret).
+        On success the order status becomes `success`. The PDF endpoint will then serve a
+        watermark-free PDF for the next 30 minutes.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resume_id, order_id, payment_id, signature]
+              properties:
+                resume_id:  { type: string, example: "res_01HXYZ" }
+                order_id:   { type: string, example: "order_Pxxxxxxxxxxxxxxxx" }
+                payment_id: { type: string, example: "pay_Pxxxxxxxxxxxxxxxx" }
+                signature:  { type: string, example: "a3f9..." }
+      responses:
+        '200':
+          description: Payment verified
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          activated: { type: boolean, example: true }
+        '400':
+          description: Invalid signature or missing fields
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/payment/cancel:
+    post:
+      tags: [Payment]
+      summary: Mark an order as failed (Razorpay modal dismissed)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: string, example: "order_Pxxxxxxxxxxxxxxxx" }
+      responses:
+        '200':
+          description: Order marked as failed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ok: { type: boolean, example: true }
+
+  /api/payment/status:
+    get:
+      tags: [Payment]
+      summary: Check if current user has a recent payment (last 30 min)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Payment status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          has_paid: { type: boolean, example: false }
+
+  # ── Resume Creation Requests ───────────────────────────────────────────────
+
+  /api/requests:
+    post:
+      tags: [Requests]
+      summary: Submit an "Ask Us to Create" resume request (₹500)
+      description: |
+        Creates a pending request and a Razorpay order for ₹500.
+        Verify payment via `/api/requests/verify`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name:        { type: string, example: "Jane Doe" }
+                email:       { type: string, example: "jane@example.com" }
+                resume_link: { type: string, example: "https://drive.google.com/file/d/..." }
+                wants_call:  { type: boolean, example: false }
+                notes:       { type: string, example: "5 years in fintech, targeting product roles" }
+      responses:
+        '201':
+          description: Request created with payment order details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          request_id: { type: string }
+                          order_id:   { type: string }
+                          amount:     { type: integer, example: 50000 }
+                          currency:   { type: string, example: "INR" }
+                          key_id:     { type: string }
+        '400':
+          description: name and email are required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/requests/verify:
+    post:
+      tags: [Requests]
+      summary: Verify payment for a resume creation request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, payment_id, signature, request_id]
+              properties:
+                order_id:   { type: string }
+                payment_id: { type: string }
+                signature:  { type: string }
+                request_id: { type: string }
+      responses:
+        '200':
+          description: Payment verified, request status set to paid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          paid: { type: boolean, example: true }
+        '400':
+          description: Invalid signature
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Admin ─────────────────────────────────────────────────────────────────
+
+  /api/admin/me:
+    get:
+      tags: [Admin]
+      summary: Get current user's admin status
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Admin status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id:       { type: string }
+                          email:    { type: string }
+                          is_admin: { type: boolean }
+
+  /api/admin/stats:
+    get:
+      tags: [Admin]
+      summary: Get aggregate platform stats (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Platform statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total_users:   { type: integer, example: 142 }
+                          total_orders:  { type: integer, example: 38 }
+                          total_revenue: { type: integer, example: 376200, description: "paise" }
+        '403':
+          description: Forbidden — admin only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/admin/users:
+    get:
+      tags: [Admin]
+      summary: List all users (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User list (password hashes stripped)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:         { type: string }
+                            email:      { type: string }
+                            name:       { type: string }
+                            provider:   { type: string }
+                            created_at: { type: string, format: date-time }
+        '403':
+          description: Forbidden — admin only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/admin/orders:
+    get:
+      tags: [Admin]
+      summary: List all payment orders (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Order' }
+        '403':
+          description: Forbidden — admin only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/admin/requests:
+    get:
+      tags: [Admin]
+      summary: List all resume creation requests (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Request list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ResumeRequest' }
+        '403':
+          description: Forbidden — admin only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
